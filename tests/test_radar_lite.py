@@ -114,7 +114,7 @@ class QuotaTests(unittest.TestCase):
     @patch("radar_lite.time.sleep")
     @patch("radar_lite.urlopen")
     def test_full_search_collection_uses_six_calls(self, urlopen, sleep):
-        rows = [{"listing_id": i, "listing_type": "download", "title": f"SVG {i}"}
+        rows = [{"listing_id": i, "listing_type": "physical", "title": f"SVG {i}"}
                 for i in range(1, 201)]
         pages = [rows[i:i + 50] for i in range(0, 200, 50)]
         pages += [rows[:100], rows[100:]]
@@ -133,7 +133,7 @@ class PoolRefreshTests(unittest.TestCase):
     def test_tracked_listing_outside_search_is_refreshed_by_id(self, urlopen, sleep):
         old = {"listing_id": 99, "title": "Old SVG title", "views": 100,
                "source_query": "svg bundle", "search_rank": 9}
-        new = {"listing_id": 99, "title": "New SVG title", "listing_type": "download", "views": 125}
+        new = {"listing_id": 99, "title": "New SVG title", "listing_type": "physical", "views": 125}
         urlopen.side_effect = [Response({"results": []}) for _ in range(TEST_CONFIG.search_requests_per_run)] + [Response({"results": [new]})]
         result = radar.collect("dummy-key", "dummy-secret", tracked_items={"99": old}, config=TEST_CONFIG)
         self.assertEqual(result[0]["views"], 125)
@@ -147,14 +147,14 @@ class PoolRefreshTests(unittest.TestCase):
     def test_existing_400_are_preserved_while_new_candidates_are_admitted(self, urlopen, sleep):
         tracked = {str(i): {"listing_id": i, "source_query": "svg bundle", "views": 10}
                    for i in range(1, 401)}
-        candidates = [{"listing_id": i, "listing_type": "download", "title": f"New SVG {i}"}
+        candidates = [{"listing_id": i, "listing_type": "physical", "title": f"New SVG {i}"}
                       for i in range(1001, 1201)]
         searches = iter([candidates[i:i + 50] for i in range(0, 200, 50)])
         def respond(request, **kwargs):
             from urllib.parse import parse_qs, urlsplit
             params = parse_qs(urlsplit(request.full_url).query)
             page = next(searches) if "/active?" in request.full_url else [
-                {"listing_id": int(i), "listing_type": "download", "title": f"SVG {i}", "views": 20}
+                {"listing_id": int(i), "listing_type": "physical", "title": f"SVG {i}", "views": 20}
                 for i in params["listing_ids"][0].split(",")]
             return Response({"results": page}, {"x-limit-per-day": "5000", "x-remaining-today": "4900"})
         urlopen.side_effect = respond
@@ -177,7 +177,7 @@ class PoolRefreshTests(unittest.TestCase):
     @patch("radar_lite.time.sleep")
     @patch("radar_lite.urlopen")
     def test_fresh_search_counter_can_fill_missing_batch_counter(self, urlopen, sleep):
-        search = {"listing_id": 99, "listing_type": "download", "title": "SVG", "views": 22}
+        search = {"listing_id": 99, "listing_type": "physical", "title": "SVG", "views": 22}
         detail = {**search, "views": None}
         urlopen.side_effect = [Response({"results": [search]})] + [Response({"results": []}) for _ in range(3)] + [Response({"results": [detail]})]
         result = radar.collect("dummy-key", "dummy-secret", config=TEST_CONFIG)
@@ -187,7 +187,7 @@ class PoolRefreshTests(unittest.TestCase):
     @patch("radar_lite.time.sleep")
     @patch("radar_lite.urlopen")
     def test_missing_batch_counter_does_not_copy_saved_views(self, urlopen, sleep):
-        detail = {"listing_id": 99, "listing_type": "download", "title": "SVG"}
+        detail = {"listing_id": 99, "listing_type": "physical", "title": "SVG"}
         urlopen.side_effect = [Response({"results": []}) for _ in range(TEST_CONFIG.search_requests_per_run)] + [Response({"results": [detail]})]
         result = radar.collect("dummy-key", "dummy-secret", tracked_items={"99": {
             "listing_id": 99, "views": 123, "source_query": "svg bundle"
@@ -212,6 +212,8 @@ class SnapshotTests(unittest.TestCase):
         }
 
     def invoke(self, state, collect):
+        for item in state["items"].values():
+            item["listing_type"] = "physical"
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
             site = Path(directory) / "site"
@@ -320,3 +322,5 @@ class SnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
