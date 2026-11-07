@@ -145,9 +145,9 @@ class ExpandedCollectorTests(unittest.TestCase):
             if "/active?" in request.full_url:
                 search_number += 1
                 rows = [{"listing_id": 10000 + search_number * 100 + i, "title": f"SVG new {i}",
-                         "type": "download", "views": 100} for i in range(100)]
+                         "type": "physical", "views": 100} for i in range(100)]
                 return Response({"count": 100000, "results": rows}, {"x-limit-per-day": "5000", "x-remaining-today": "4000"})
-            rows = [{"listing_id": int(i), "title": "SVG", "type": "download", "views": 110}
+            rows = [{"listing_id": int(i), "title": "SVG", "type": "physical", "views": 110}
                     for i in params["listing_ids"][0].split(",")]
             return Response({"results": rows})
         urlopen.side_effect = respond
@@ -227,3 +227,5 @@ class ExpandedSnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

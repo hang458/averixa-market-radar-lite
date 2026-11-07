@@ -37,13 +37,13 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Discover candidates and collect a quota-guarded measured snapshot
-        run: python radar_lite.py --config config/research.json --state state/radar_state.json --site site
+        run: python radar_lite.py --config config/research.json --state state/physical_radar_state.json --site site
 
       - name: Persist compact public state
         run: |
           git config user.name "EtsyPulse Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/radar_state.json
+          git add state/physical_radar_state.json
           git diff --cached --quiet || git commit -m "Update EtsyPulse snapshot"
           git push
 
@@ -55,3 +55,5 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@v4
+
+

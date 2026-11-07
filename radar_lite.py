@@ -174,8 +174,14 @@ def digital(raw: dict[str, Any]) -> bool:
     return any(word in text for word in ("svg", "png", "digital", "printable", "template"))
 
 
+def physical(raw: dict[str, Any]) -> bool:
+    """Only accept explicitly physical Etsy listings; unknown types stay excluded."""
+    listing_type = str(raw.get("type") or raw.get("listing_type") or "").lower().strip()
+    return listing_type == "physical" and raw.get("is_digital") is not True
+
+
 def normalise(raw: dict[str, Any], keyword: str, rank: int) -> dict[str, Any] | None:
-    if not raw.get("listing_id") or not digital(raw):
+    if not raw.get("listing_id") or not physical(raw):
         return None
     image = next(iter(raw.get("images") or raw.get("Images") or []), {})
     price = raw.get("price")
@@ -190,6 +196,7 @@ def normalise(raw: dict[str, Any], keyword: str, rank: int) -> dict[str, Any] | 
         "listing_id": int(raw["listing_id"]),
         "title": html.unescape(str(raw.get("title") or f"Listing {raw['listing_id']}")).strip(),
         "url": raw.get("url") or f"https://www.etsy.com/listing/{raw['listing_id']}",
+        "listing_type": "physical",
         "image_url": image.get("url_570xN") if isinstance(image, dict) else None,
         "price": price_value,
         "currency": currency,
@@ -412,7 +419,7 @@ def collect(keystring: str, secret: str, *, budget: RequestBudget | None = None,
     research_state = research_state if research_state is not None else {}
     captured_at = captured_at or now().isoformat()
     research_state["last_run"] = {"search_requests": 0, "search_results_seen": 0,
-        "digital_results_seen": 0, "new_candidates": 0, "queries": []}
+        "physical_results_seen": 0, "new_candidates": 0, "queries": []}
     for key, old in tracked_items.items():
         if key not in research_state.setdefault("candidates", {}):
             remember_candidate(research_state, old, old.get("last_seen_at") or captured_at)
@@ -431,7 +438,7 @@ def collect(keystring: str, secret: str, *, budget: RequestBudget | None = None,
         for rank, item in enumerate(results, start=task["offset"] + 1):
             row = normalise(item, keyword, rank)
             if row:
-                summary["digital_results_seen"] += 1
+                summary["physical_results_seen"] += 1
                 summary["new_candidates"] += int(remember_candidate(research_state, row, captured_at))
                 found.setdefault(int(item["listing_id"]), (dict(item), keyword, rank))
         finish_search(research_state, config, task, len(results), response.get("count"), captured_at)
@@ -478,7 +485,7 @@ HTML = r"""<!doctype html>
 <div class="filters" id="product-pager"><button id="product-prev">上一页</button><span class="muted" id="product-page"></span><button id="product-next">下一页</button></div>
 <section id="discovery" class="view"><p class="muted" id="coverage"></p><div class="filters"><input id="cq" placeholder="搜索候选商品"><button id="download-candidates">下载全部候选商品 CSV</button></div><div id="candidate-rows"></div><div class="filters"><button id="candidate-prev">上一页候选</button><span class="muted" id="candidate-page"></span><button id="candidate-next">下一页候选</button></div></section>
 <section id="niches" class="view"><div class="filters"><input id="nq" placeholder="搜索细分市场"></div><div class="niche-grid" id="niche-rows"></div></section></div>
-<p class="foot" id="quota"></p><p class="foot"><b>采集范围</b>：仅轮换采集配置的数字细分市场，并非 Etsy 全站完整目录。<b>支持性销量信号</b>：依据同一观察窗口的库存下降及公开店铺销量计数推断，并非真实订单。<b>估算销量</b>：依据库存、浏览和收藏信号估算。信号评分是规则评分，不是统计置信概率；信号／浏览增量不是真实购买转化率。</p></main>
+<p class="foot" id="quota"></p><p class="foot"><b>采集范围</b>：仅轮换采集配置的实物细分市场，并非 Etsy 全站完整目录。<b>支持性销量信号</b>：依据同一观察窗口的库存下降及公开店铺销量计数推断，并非真实订单。<b>估算销量</b>：依据库存、浏览和收藏信号估算。信号评分是规则评分，不是统计置信概率；信号／浏览增量不是真实购买转化率。</p></main>
 <script>
 const n=v=>Number(v||0), f=v=>v==null?'—':n(v).toLocaleString(undefined,{maximumFractionDigits:2}), pct=v=>v==null?'—':f(v)+'%', esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let products=[], niches=[], candidates=[], productPage=0, candidatePage=0;
@@ -511,11 +518,11 @@ function saveCsv(head,body,prefix){
 function drawCandidates(){
  const q=document.querySelector('#cq').value.toLowerCase(),matched=candidates.filter(r=>(r.title+' '+r.discovery_queries.join(' ')).toLowerCase().includes(q));candidatePage=Math.min(candidatePage,Math.max(0,Math.ceil(matched.length/100)-1));const rows=matched.slice(candidatePage*100,(candidatePage+1)*100);
  document.querySelector('#candidate-page').textContent=`页码 ${candidatePage+1} / ${Math.max(1,Math.ceil(matched.length/100))} · ${matched.length} 个候选`;document.querySelector('#candidate-prev').disabled=candidatePage===0;document.querySelector('#candidate-next').disabled=(candidatePage+1)*100>=matched.length;
- document.querySelector('#candidate-rows').innerHTML=rows.length?`<div class="table-wrap"><table><tr><th>数字商品候选</th><th>细分市场</th><th>价格</th><th>最近发现时累计浏览</th><th>最近发现</th><th>测量状态</th></tr>${rows.map(r=>`<tr><td class="product"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></td><td>${esc(r.discovery_queries.join(', '))}</td><td>${esc(r.currency)} ${f(r.price)}</td><td>${f(r.views)}</td><td>${esc(new Date(r.last_discovered_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }))}</td><td>${r.is_tracked?'正在跟踪':'候选池中；暂无销量信号或浏览对比'}</td></tr>`).join('')}</table></div>`:'<p class="muted">当前筛选无候选商品。</p>';
+ document.querySelector('#candidate-rows').innerHTML=rows.length?`<div class="table-wrap"><table><tr><th>实物商品候选</th><th>细分市场</th><th>价格</th><th>最近发现时累计浏览</th><th>最近发现</th><th>测量状态</th></tr>${rows.map(r=>`<tr><td class="product"><a href="${esc(r.url)}" target="_blank" rel="noreferrer">${esc(r.title)}</a></td><td>${esc(r.discovery_queries.join(', '))}</td><td>${esc(r.currency)} ${f(r.price)}</td><td>${f(r.views)}</td><td>${esc(new Date(r.last_discovered_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }))}</td><td>${r.is_tracked?'正在跟踪':'候选池中；暂无销量信号或浏览对比'}</td></tr>`).join('')}</table></div>`:'<p class="muted">当前筛选无候选商品。</p>';
 }
 function downloadCandidates(){const fields=['listing_id','title','url','source_query','price','currency','views','discovered_at','last_discovered_at','is_tracked'];saveCsv([...fields,'discovery_queries'],candidates.map(r=>[...fields.map(k=>r[k]),r.discovery_queries.join(' | ')]),'etsypulse-all-candidates-')}
 function drawNiches(){const q=document.querySelector('#nq').value.toLowerCase(),rows=niches.filter(x=>x.niche_name.toLowerCase().includes(q));document.querySelector('#niche-rows').innerHTML=rows.length?rows.map(x=>`<article class="panel niche"><h3>${esc(x.niche_name)}</h3><div class="muted">${f(x.comparable)} / ${f(x.observed_listing_count)} 可比较商品 · 示例： <a href="${esc(x.sample_url||'#')}" target="_blank" rel="noreferrer">${esc(x.sample_title||'—')}</a></div><div class="niche-metrics"><div><span class="label">支持性销量信号／24小时</span><b>${f(x.confirmed_sales_24h)}</b></div><div><span class="label">估算销量／24小时</span><b>${f(x.estimated_sales_24h)}</b></div><div><span class="label">信号／浏览增量</span><b>${pct(x.confirmed_sales_view_24h)}</b></div><div><span class="label">机会评分</span><b>${f(x.opportunity_score)}</b></div></div></article>`).join(''):'<p class="muted">当前筛选无细分市场。</p>'}
-const cacheBust='?v='+Date.now();Promise.all(['data/status.json','data/radar.json','data/niches.json','data/candidates.json'].map(x=>fetch(x+cacheBust,{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('数据不可用');return r.json()}))).then(([s,r,ns,cs])=>{products=r;niches=ns;candidates=cs;document.querySelector('#updated').textContent=(s.generated_at?'最近测量： '+new Date(s.generated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }):'暂无测量')+(s.collection_message?' · '+s.collection_message:'');document.querySelector('#cards').innerHTML=[['已发现候选',s.candidates],['跟踪商品',s.listings],['本轮更新',s.updated_listings],['可比较商品',s.comparable],['浏览量增长商品',s.view_increase_listings],['本轮新增候选',s.discovery.new_candidates||0],['支持性销量信号 · 24小时',s.confirmed_sales_24h],['估算销量 · 24小时',s.estimated_sales_24h],['最高支持性信号／浏览增量',pct(s.top_confirmed_sales_view_24h)],['已配置细分市场',s.keywords],['已扫描细分市场',s.scanned_keywords],['本轮 API 请求',s.api_usage.requests||0]].map(([k,v])=>`<div class="card"><div class="label">${k}</div><div class="value">${typeof v==='string'?esc(v):f(v)}</div></div>`).join('');document.querySelector('#coverage').textContent=`${s.scanned_keywords}/${s.keywords} 个细分市场已扫描。候选容量 ${f(s.capacities.candidates)}, 跟踪容量 ${f(s.capacities.tracked)}. 轮换扫描各市场的新商品及更深分页。最近一轮： ${(s.discovery.queries||[]).map(x=>x.keyword+' · '+(x.sort_on==='score'?'相关性排序':'最新')+' · 页 '+x.page).join(' / ')}. 候选数量不代表即时测量或真实成交验证。`;document.querySelector('#quota').textContent=`配额保护：本轮 ${f(s.api_usage.requests||0)} / ${f(s.api_usage.max_requests_per_run)} 次请求 · Etsy 剩余配额 ${f(s.api_usage.remaining_today)} / ${f(s.api_usage.daily_limit)} · EtsyPulse son 24 小时 ${f(s.api_usage.rolling_daily_requests)} / ${f(s.api_usage.max_daily_requests)} 次请求.`;drawProducts();drawNiches();drawCandidates();document.querySelector('#q').oninput=()=>{productPage=0;drawProducts()};document.querySelector('#sort').onchange=()=>{productPage=0;drawProducts()};document.querySelector('#quality').onchange=()=>{productPage=0;drawProducts()};document.querySelector('#download-csv').onclick=downloadCsv;document.querySelector('#download-candidates').onclick=downloadCandidates;document.querySelector('#cq').oninput=()=>{candidatePage=0;drawCandidates()};document.querySelector('#product-prev').onclick=()=>{productPage--;drawProducts()};document.querySelector('#product-next').onclick=()=>{productPage++;drawProducts()};document.querySelector('#candidate-prev').onclick=()=>{candidatePage--;drawCandidates()};document.querySelector('#candidate-next').onclick=()=>{candidatePage++;drawCandidates()};document.querySelector('#nq').oninput=drawNiches;document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelector('#'+b.dataset.view).classList.add('active');document.querySelector('#product-pager').hidden=b.dataset.view!=='products'})}).catch(()=>{document.querySelector('#updated').textContent='数据加载失败，请刷新页面。'});
+const cacheBust='?v='+Date.now();Promise.all(['data/status.json','data/radar.json','data/niches.json','data/candidates.json'].map(x=>fetch(x+cacheBust,{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('数据不可用');return r.json()}))).then(([s,r,ns,cs])=>{products=r;niches=ns;candidates=cs;document.querySelector('#updated').textContent=(s.generated_at?'最近测量： '+new Date(s.generated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }):'暂无测量')+(s.collection_message?' · '+s.collection_message:'');document.querySelector('#cards').innerHTML=[['已发现候选',s.candidates],['跟踪商品',s.listings],['本轮更新',s.updated_listings],['可比较商品',s.comparable],['浏览量增长商品',s.view_increase_listings],['本轮新增候选',s.discovery.new_candidates||0],['支持性销量信号 · 24小时',s.confirmed_sales_24h],['估算销量 · 24小时',s.estimated_sales_24h],['最高支持性信号／浏览增量',pct(s.top_confirmed_sales_view_24h)],['已配置细分市场',s.keywords],['已扫描细分市场',s.scanned_keywords],['本轮 API 请求',s.api_usage.requests||0]].map(([k,v])=>`<div class="card"><div class="label">${k}</div><div class="value">${typeof v==='string'?esc(v):f(v)}</div></div>`).join('');document.querySelector('#coverage').textContent=`${s.scanned_keywords}/${s.keywords} 个细分市场已扫描。候选容量 ${f(s.capacities.candidates)}, 跟踪容量 ${f(s.capacities.tracked)}. 轮换扫描各市场的新商品及更深分页。最近一轮： ${(s.discovery.queries||[]).map(x=>x.keyword+' · '+(x.sort_on==='score'?'相关性排序':'最新')+' · 页 '+x.page).join(' / ')}. 候选数量不代表即时测量或真实成交验证。`;document.querySelector('#quota').textContent=`配额保护：本轮 ${f(s.api_usage.requests||0)} / ${f(s.api_usage.max_requests_per_run)} 次请求 · Etsy 剩余配额 ${f(s.api_usage.remaining_today)} / ${f(s.api_usage.daily_limit)} · EtsyPulse 最近24小时 ${f(s.api_usage.rolling_daily_requests)} / ${f(s.api_usage.max_daily_requests)} 次请求.`;drawProducts();drawNiches();drawCandidates();document.querySelector('#q').oninput=()=>{productPage=0;drawProducts()};document.querySelector('#sort').onchange=()=>{productPage=0;drawProducts()};document.querySelector('#quality').onchange=()=>{productPage=0;drawProducts()};document.querySelector('#download-csv').onclick=downloadCsv;document.querySelector('#download-candidates').onclick=downloadCandidates;document.querySelector('#cq').oninput=()=>{candidatePage=0;drawCandidates()};document.querySelector('#product-prev').onclick=()=>{productPage--;drawProducts()};document.querySelector('#product-next').onclick=()=>{productPage++;drawProducts()};document.querySelector('#candidate-prev').onclick=()=>{candidatePage--;drawCandidates()};document.querySelector('#candidate-next').onclick=()=>{candidatePage++;drawCandidates()};document.querySelector('#nq').oninput=drawNiches;document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelector('#'+b.dataset.view).classList.add('active');document.querySelector('#product-pager').hidden=b.dataset.view!=='products'})}).catch(()=>{document.querySelector('#updated').textContent='数据加载失败，请刷新页面。'});
 </script></html>"""
 
 
@@ -595,7 +602,7 @@ def write_site(state: dict[str, Any], site: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the free static Averixa Market Radar")
-    parser.add_argument("--state", type=Path, default=Path("state/radar_state.json"))
+    parser.add_argument("--state", type=Path, default=Path("state/physical_radar_state.json"))
     parser.add_argument("--site", type=Path, default=Path("site"))
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--render-only", action="store_true", help="Render saved public data without credentials or API requests")
@@ -611,6 +618,8 @@ def main() -> None:
     if not keystring or not secret:
         raise SystemExit("ETSY_KEYSTRING and ETSY_SHARED_SECRET GitHub secrets are required.")
     state, captured_at = load_state(args.state), now().isoformat()
+    if state.get("items") and any(item.get("last_seen_at") and item.get("listing_type") != "physical" for item in state["items"].values()):
+        raise SystemExit("旧状态包含数字商品或类型不明商品；请使用独立的 state/physical_radar_state.json，不要覆盖旧状态。")
     used = requests_in_window(state.get("research", {}), now())
     budget = RequestBudget(config.max_requests_per_run)
     retry_at = parse_time(state.get("api_usage", {}).get("retry_at"))
